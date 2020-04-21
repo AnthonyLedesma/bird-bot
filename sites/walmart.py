@@ -1,6 +1,6 @@
 from sites.walmart_encryption import walmart_encryption as w_e
 from utils import send_webhook
-import urllib,requests,time,lxml.html,json,sys,settings
+import urllib,requests,time,lxml.html,json,sys,settings,send_sms
 
 class Walmart:
     def __init__(self,task_id,status_signal,image_signal,product,profile,proxy,monitor_delay,error_delay,max_price):
@@ -10,7 +10,7 @@ class Walmart:
             self.session.proxies.update(proxy)
         self.status_signal.emit({"msg":"Starting","status":"normal"})
         self.product_image, offer_id = self.monitor()
-        self.atc(offer_id)
+        self.atc(offer_id,product)
         item_id, fulfillment_option, ship_method = self.check_cart_items()
         self.submit_shipping_method(item_id, fulfillment_option, ship_method)
         self.submit_shipping_address()
@@ -28,7 +28,7 @@ class Walmart:
             "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.69 Safari/537.36"
         }
         image_found = False
-        sproduct_image = ""
+        product_image = ""
         while True:
             self.status_signal.emit({"msg":"Loading Product Page","status":"normal"})
             try:
@@ -58,8 +58,8 @@ class Walmart:
             except Exception as e:
                 self.status_signal.emit({"msg":"Error Loading Product Page (line {} {} {})".format(sys.exc_info()[-1].tb_lineno, type(e).__name__, e),"status":"error"})
                 time.sleep(self.error_delay)
-    
-    def atc(self,offer_id):
+
+    def atc(self,offer_id,product):
         headers={
             "accept": "application/json",
             "accept-encoding": "gzip, deflate, br",
@@ -70,6 +70,11 @@ class Walmart:
             "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.69 Safari/537.36"
         }
         body = {"offerId":offer_id,"quantity":1}
+
+        # griffin personalized code. If we got here, the item is in stock. With BB we cannot checkout with the bot,
+        # so instead we will send griffin a text message alerting him
+        send_sms.send_text("Walmart Switch in stock at url {}".format(self.product))
+
         while True:
             self.status_signal.emit({"msg":"Adding To Cart","status":"normal"})
             try:
@@ -79,7 +84,7 @@ class Walmart:
                     return
                 else:
                     self.status_signal.emit({"msg":"Error Adding To Cart","status":"error"})
-                    time.sleep(self.error_delay) 
+                    time.sleep(self.error_delay)
             except Exception as e:
                 self.status_signal.emit({"msg":"Error Adding To Cart (line {} {} {})".format(sys.exc_info()[-1].tb_lineno, type(e).__name__, e),"status":"error"})
                 time.sleep(self.error_delay)
@@ -114,7 +119,7 @@ class Walmart:
                         time.sleep(self.monitor_delay)
                     else:
                         self.status_signal.emit({"msg":"Error Loading Cart Items, Got Response: "+str(r.text),"status":"error"})
-                        time.sleep(self.error_delay) 
+                        time.sleep(self.error_delay)
             except Exception as e:
                 self.status_signal.emit({"msg":"Error Loading Cart Items (line {} {} {})".format(sys.exc_info()[-1].tb_lineno, type(e).__name__, e),"status":"error"})
                 time.sleep(self.error_delay)
@@ -147,7 +152,7 @@ class Walmart:
             except Exception as e:
                 self.status_signal.emit({"msg":"Error Submitting Shipping Method (line {} {} {})".format(sys.exc_info()[-1].tb_lineno, type(e).__name__, e),"status":"error"})
                 time.sleep(self.error_delay)
-    
+
     def submit_shipping_address(self):
         headers = {
             "accept": "application/json, text/javascript, */*; q=0.01",
@@ -193,7 +198,7 @@ class Walmart:
             except Exception as e:
                 self.status_signal.emit({"msg":"Error Submitting Shipping Address (line {} {} {})".format(sys.exc_info()[-1].tb_lineno, type(e).__name__, e),"status":"error"})
                 time.sleep(self.error_delay)
-    
+
     def get_PIE(self):
         headers = {
             "Accept": "*/*",
@@ -223,7 +228,7 @@ class Walmart:
             except Exception as e:
                 self.status_signal.emit({"msg":"Error Getting Checkout Data (line {} {} {})".format(sys.exc_info()[-1].tb_lineno, type(e).__name__, e),"status":"error"})
                 time.sleep(self.error_delay)
-    
+
     def submit_payment(self,card_data,PIE_key_id,PIE_phase):
         headers = {
             "accept": "application/json",
@@ -326,7 +331,7 @@ class Walmart:
             except Exception as e:
                 self.status_signal.emit({"msg":"Error Submitting Billing (line {} {} {})".format(sys.exc_info()[-1].tb_lineno, type(e).__name__, e),"status":"error"})
                 time.sleep(self.error_delay)
-    
+
     def submit_order(self):
         headers = {
             "accept": "application/json, text/javascript, */*; q=0.01",
@@ -357,7 +362,7 @@ class Walmart:
             except Exception as e:
                 self.status_signal.emit({"msg":"Error Submitting Order (line {} {} {})".format(sys.exc_info()[-1].tb_lineno, type(e).__name__, e),"status":"error"})
                 time.sleep(self.error_delay)
-    
+
     def check_browser(self):
         if settings.browser_on_failed:
             self.status_signal.emit({"msg":"Browser Ready","status":"alt","url":"https://www.walmart.com/checkout/#/payment","cookies":[{"name":cookie.name,"value":cookie.value,"domain":cookie.domain} for cookie in self.session.cookies]})

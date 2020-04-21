@@ -1,0 +1,12 @@
+#!/usr/bin/python
+
+# import the Twilio client from the dependency we installed
+from twilio.rest import Client
+
+client = Client("yourinfohere","yourinfohere")
+
+def send_text(text_msg_body):
+
+	client.messages.create(to="to-number-here",
+						   from_="from-number-here",
+						   body=text_msg_body)

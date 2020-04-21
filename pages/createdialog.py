@@ -94,6 +94,7 @@ class CreateDialog(QtWidgets.QDialog):
 
         self.site_box.addItem("Bestbuy")
         self.site_box.addItem("Walmart")
+        self.site_box.addItem("Target")
 
         QtCore.QMetaObject.connectSlotsByName(CreateDialog)
     def autofill(self):
@@ -101,6 +102,8 @@ class CreateDialog(QtWidgets.QDialog):
             self.site_box.setCurrentIndex(self.site_box.findText("Bestbuy"))
         elif "walmart" in self.input_edit.text():
             self.site_box.setCurrentIndex(self.site_box.findText("Walmart"))
+        elif "target" in self.input_edit.text():
+            self.site_box.setCurrentIndex(self.site_box.findText("Target"))
 
     def load_data(self, task_tab):
         self.site_box.setCurrentText(task_tab.site)
@@ -111,6 +114,6 @@ class CreateDialog(QtWidgets.QDialog):
         self.error_edit.setText(task_tab.error_delay)
         self.price_edit.setText(task_tab.max_price)
         self.maxprice_checkbox.setChecked(task_tab.max_price is not '')
-        self.addtask_btn.setText('Update Task')
+        self.addtask_btn.setText('Edit Task')
 
 

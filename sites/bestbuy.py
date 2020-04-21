@@ -6,7 +6,7 @@ except:
     from Cryptodome.Cipher import PKCS1_OAEP
 from base64 import b64encode
 from utils import send_webhook
-import requests,time,lxml.html,json,sys,settings
+import requests,time,lxml.html,json,sys,settings,send_sms
 
 class BestBuy:
     def __init__(self,task_id,status_signal,image_signal,product,profile,proxy,monitor_delay,error_delay):
@@ -16,7 +16,9 @@ class BestBuy:
             self.session.proxies.update(proxy)
         self.status_signal.emit({"msg":"Starting","status":"normal"})
         tas_data = self.get_tas_data()
-        product_image = self.monitor()
+        while True:
+            product_image = self.monitor()
+            time.sleep(20)
         self.atc()
         self.start_checkout()
         self.submit_shipping()
@@ -36,7 +38,7 @@ class BestBuy:
                     else:
                         send_webhook("PF","Bestbuy",self.profile["profile_name"],task_id,product_image)
                 break
-    
+
     def get_tas_data(self):
         headers={
             "accept": "*/*",
@@ -79,6 +81,7 @@ class BestBuy:
                         image_found = True
                     if self.check_stock():
                         return product_image
+
                     self.status_signal.emit({"msg":"Waiting For Restock","status":"normal"})
                     time.sleep(self.monitor_delay)
                 else:
@@ -87,7 +90,7 @@ class BestBuy:
             except Exception as e:
                 self.status_signal.emit({"msg":"Error Loading Product Page (line {} {} {})".format(sys.exc_info()[-1].tb_lineno, type(e).__name__, e),"status":"error"})
                 time.sleep(self.error_delay)
-    
+
     def check_stock(self):
         headers = {
             "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
@@ -100,11 +103,20 @@ class BestBuy:
             try:
                 url = "https://www.bestbuy.com/api/tcfb/model.json?paths=%5B%5B%22shop%22%2C%22scds%22%2C%22v2%22%2C%22page%22%2C%22tenants%22%2C%22bbypres%22%2C%22pages%22%2C%22globalnavigationv5sv%22%2C%22header%22%5D%2C%5B%22shop%22%2C%22buttonstate%22%2C%22v5%22%2C%22item%22%2C%22skus%22%2C{}%2C%22conditions%22%2C%22NONE%22%2C%22destinationZipCode%22%2C%22%2520%22%2C%22storeId%22%2C%22%2520%22%2C%22context%22%2C%22cyp%22%2C%22addAll%22%2C%22false%22%5D%5D&method=get".format(self.sku_id)
                 r = self.session.get(url,headers=headers)
-                return "ADD_TO_CART" in r.text 
+                if "Add to Cart" in r.text:
+
+                    # personalized code. If we got here, the item is in stock. With BB we cannot checkout with the bot,
+                    # so instead we will send griffin a text message alerting him
+                    send_sms.send_text("Bestbuy Switch in stock at url {}".format(self.product))
+                    self.status_signal.emit({"msg":"In Stock, sending SMS...","status":"normal"})
+                    return True
+                else:
+                    return False
+
             except Exception as e:
                 self.status_signal.emit({"msg":"Error Checking Stock (line {} {} {})".format(sys.exc_info()[-1].tb_lineno, type(e).__name__, e),"status":"error"})
                 time.sleep(self.error_delay)
-    
+
     def atc(self):
         headers={
             "accept": "application/json",
@@ -117,16 +129,18 @@ class BestBuy:
             "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.92 Safari/537.36"
         }
         body = {"items":[{"skuId":self.sku_id}]}
+
         while True:
             self.status_signal.emit({"msg":"Adding To Cart","status":"normal"})
             try:
                 r = self.session.post("https://www.bestbuy.com/cart/api/v1/addToCart",json=body,headers=headers)
+                print("Success!")
                 if r.status_code == 200 and json.loads(r.text)["cartCount"] == 1:
                     self.status_signal.emit({"msg":"Added To Cart","status":"carted"})
                     return
                 else:
                     self.status_signal.emit({"msg":"Error Adding To Cart","status":"error"})
-                    time.sleep(self.error_delay) 
+                    time.sleep(self.error_delay)
             except Exception as e:
                 self.status_signal.emit({"msg":"Error Adding To Cart (line {} {} {})".format(sys.exc_info()[-1].tb_lineno, type(e).__name__, e),"status":"error"})
                 time.sleep(self.error_delay)
@@ -198,7 +212,7 @@ class BestBuy:
             except Exception as e:
                 self.status_signal.emit({"msg":"Error Submitting Shipping (line {} {} {})".format(sys.exc_info()[-1].tb_lineno, type(e).__name__, e),"status":"error"})
                 time.sleep(self.error_delay)
-    
+
     def submit_payment(self,tas_data):
         headers={
             "accept": "application/com.bestbuy.order+json",
@@ -262,7 +276,7 @@ class BestBuy:
             except Exception as e:
                 self.status_signal.emit({"msg":"Error Submitting Payment (line {} {} {})".format(sys.exc_info()[-1].tb_lineno, type(e).__name__, e),"status":"error"})
                 time.sleep(self.error_delay)
-    
+
     def submit_order(self):
         headers = {
             "accept": "application/com.bestbuy.order+json",
@@ -284,18 +298,18 @@ class BestBuy:
                     r = r["errors"][0]
                     if r["errorCode"] == "PAY_SECURE_REDIRECT":
                         self.status_signal.emit({"msg":"3DSecure Found, Starting Auth Process","status":"error"})
-                        return False, r["paySecureResponse"]["stepUpJwt"]                        
+                        return False, r["paySecureResponse"]["stepUpJwt"]
                 except:
                     if r["state"] == "SUBMITTED":
                         self.status_signal.emit({"msg":"Order Placed","status":"success"})
                         return True, None
                 self.status_signal.emit({"msg":"Payment Failed","status":"error"})
                 return False, None
-                    
+
             except Exception as e:
                 self.status_signal.emit({"msg":"Error Submitting Order (line {} {} {})".format(sys.exc_info()[-1].tb_lineno, type(e).__name__, e),"status":"error"})
                 time.sleep(self.error_delay)
-    
+
     def handle_3dsecure(self,jwt):
         headers = {
             "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
@@ -385,16 +399,16 @@ class BestBuy:
                 md = doc.xpath('//input[@name="MD"]/@value')[0]
                 device_id = doc.xpath('//input[@name="DeviceID"]/@value')[0]
                 locale = doc.xpath('//input[@name="locale"]/@value')[0]
-                ABSlog = doc.xpath('//input[@name="ABSlog"]/@value')[0] 
-                device_DNA =  doc.xpath('//input[@name="deviceDNA"]/@value')[0] 
-                execution_time =  doc.xpath('//input[@name="executionTime"]/@value')[0] 
-                dna_error =  doc.xpath('//input[@name="dnaError"]/@value')[0] 
-                mesc =  doc.xpath('//input[@name="mesc"]/@value')[0] 
-                mesc_iteration_count =  doc.xpath('//input[@name="mescIterationCount"]/@value')[0] 
-                desc =  doc.xpath('//input[@name="desc"]/@value')[0] 
-                is_DNA_done =  doc.xpath('//input[@name="isDNADone"]/@value')[0] 
-                arcot_flash_cookie =  doc.xpath('//input[@name="arcotFlashCookie"]/@value')[0] 
-                url = doc.xpath("//form/@action")[0]              
+                ABSlog = doc.xpath('//input[@name="ABSlog"]/@value')[0]
+                device_DNA =  doc.xpath('//input[@name="deviceDNA"]/@value')[0]
+                execution_time =  doc.xpath('//input[@name="executionTime"]/@value')[0]
+                dna_error =  doc.xpath('//input[@name="dnaError"]/@value')[0]
+                mesc =  doc.xpath('//input[@name="mesc"]/@value')[0]
+                mesc_iteration_count =  doc.xpath('//input[@name="mescIterationCount"]/@value')[0]
+                desc =  doc.xpath('//input[@name="desc"]/@value')[0]
+                is_DNA_done =  doc.xpath('//input[@name="isDNADone"]/@value')[0]
+                arcot_flash_cookie =  doc.xpath('//input[@name="arcotFlashCookie"]/@value')[0]
+                url = doc.xpath("//form/@action")[0]
                 break
             except Exception as e:
                 self.status_signal.emit({"msg":"Error Authorizing Card (line {} {} {})".format(sys.exc_info()[-1].tb_lineno, type(e).__name__, e),"status":"error"})
@@ -435,7 +449,7 @@ class BestBuy:
                 doc = lxml.html.fromstring(r.text)
                 pa_res = doc.xpath('//input[@name="PaRes"]/@value')[0]
                 md = doc.xpath('//input[@name="MD"]/@value')[0]
-                url = doc.xpath("//form/@action")[0]  
+                url = doc.xpath("//form/@action")[0]
                 break
             except Exception as e:
                 self.status_signal.emit({"msg":"Error Authorizing Card (line {} {} {})".format(sys.exc_info()[-1].tb_lineno, type(e).__name__, e),"status":"error"})
@@ -486,7 +500,7 @@ class BestBuy:
                 r = self.session.post("https://centinelapi.cardinalcommerce.com/V1/Cruise/TermRedirection",data=body,headers=headers)
                 doc = lxml.html.fromstring(r.text)
                 transaction_id = doc.xpath('//input[@name="TransactionId"]/@value')[0]
-                # url = doc.xpath("//form/@action")[0] 
+                # url = doc.xpath("//form/@action")[0]
                 return transaction_id
             except Exception as e:
                 self.status_signal.emit({"msg":"Error Authorizing Card (line {} {} {})".format(sys.exc_info()[-1].tb_lineno, type(e).__name__, e),"status":"error"})
@@ -513,7 +527,7 @@ class BestBuy:
                     return
                 else:
                     self.status_signal.emit({"msg":"Error Submitting Card","status":"error"})
-                    time.sleep(self.error_delay)  
+                    time.sleep(self.error_delay)
             except Exception as e:
                 self.status_signal.emit({"msg":"Error Submitting Card (line {} {} {})".format(sys.exc_info()[-1].tb_lineno, type(e).__name__, e),"status":"error"})
                 time.sleep(self.error_delay)
